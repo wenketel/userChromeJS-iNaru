@@ -1,22 +1,24 @@
 // ==UserScript==
 // @name			Network Indicator
-// @version			0.0.1
+// @version			0.0.2
 // @compatibility	FF34+
 // @description		显示当前页面连接IP 和SPDY、HTTP/2
 // @include			main
 // ==/UserScript==
 
-location == 'chrome://browser/content/browser.xul' && (function(){
+'use strict';
 
-	'use strict';
+if (location == 'chrome://browser/content/browser.xul') {
 
-	var networkIndicator = {
+	let networkIndicator = {
 
 		init(){
 			if(this.icon) return;
 			this.setStyle();
 			this.icon.addEventListener('click', this, false);
 			this.panel.addEventListener('dblclick', this, false);
+			this.panel.addEventListener('mouseover', this, false);
+			this.panel.addEventListener('mouseout', this, false);
 			gBrowser.tabContainer.addEventListener('TabSelect', this, false);
 			['content-document-global-created', 'inner-window-destroyed', 'outer-window-destroyed',
 			 'http-on-examine-cached-response', 'http-on-examine-response'].forEach(topic => {
@@ -95,7 +97,7 @@ location == 'chrome://browser/content/browser.xul' && (function(){
 		recordInner: {},
 
 		onExamineResponse(subject, topic) {
-			var channel = subject.QueryInterface(Ci.nsIHttpChannel),
+			let channel = subject.QueryInterface(Ci.nsIHttpChannel),
 				nc = channel.notificationCallbacks || channel.loadGroup && channel.loadGroup.notificationCallbacks,
 				domWinUtils = null,
 				domWindow = null;
@@ -123,7 +125,7 @@ location == 'chrome://browser/content/browser.xul' && (function(){
 				domWinUtils = this.getWinId(ww.topFrameElement);
 			}
 
-			var isMainHost = (channel.loadFlags & Ci.nsIChannel.LOAD_INITIAL_DOCUMENT_URI
+			let isMainHost = (channel.loadFlags & Ci.nsIChannel.LOAD_INITIAL_DOCUMENT_URI
 					&& domWindow && domWindow == domWindow.top);
 
 			//排除ChromeWindow的、unload等事件触发的请求响应
@@ -133,7 +135,7 @@ location == 'chrome://browser/content/browser.xul' && (function(){
 					&& channel.loadInfo.loadingDocument.ownerGlobal === null)
 			) return;
 
-			var outerID = domWinUtils.outerWindowID,
+			let outerID = domWinUtils.outerWindowID,
 				innerID = domWinUtils.currentInnerWindowID,
 				newentry = Object.create(null),
 				cwId = this.getWinId();
@@ -147,12 +149,12 @@ location == 'chrome://browser/content/browser.xul' && (function(){
 			try{
 				//获取响应头的服务器、SPDY、HTTP/2信息
 				channel.visitResponseHeaders({
-					visitHeader: (aName, aValue) => {
-						let lowerName = aName.toLowerCase();
+					visitHeader(name, value){
+						let lowerName = name.toLowerCase();
 						if (lowerName == 'server') {
-							newentry.server = aValue
+							newentry.server = value
 						}else if(lowerName == 'x-firefox-spdy'){
-							newentry.spdy = aValue
+							newentry.spdy = value
 						}
 					}
 				});
@@ -206,9 +208,9 @@ location == 'chrome://browser/content/browser.xul' && (function(){
 		},
 
 		updatePanel(record, isMainHost){
-			var cE = this.createElement,
+			let cE = this.createElement,
 				list = this.panel._list,
-				li = list.querySelector('li[ucni-ip="'+ record.ip +'"]'),
+				li = list.querySelector(`li[ucni-ip="${record.ip}"]`),
 				p = null;
 
 			if(!li){//不存在相同的IP
@@ -232,7 +234,7 @@ location == 'chrome://browser/content/browser.xul' && (function(){
 					this.setTooltip(li, record);
 				}
 			}else{//相同的IP
-				p = li.querySelector('.ucni-host[host="'+ record.host +'"]');
+				p = li.querySelector(`.ucni-host[host="${record.host}"]`);
 				if(!p){//同IP不同的域名
 					p = cE('html:p', {class: 'ucni-host', host: record.host, scheme: record.scheme, counter: 1, text: record.host + '\n'}, li.querySelector('.ucni-host').parentNode);
 					p._connCounter = 1;
@@ -275,6 +277,7 @@ location == 'chrome://browser/content/browser.xul' && (function(){
 
 		setMainHostLocation(obj, list) {
 			if(obj.location){
+				if(list.querySelector('#ucni-mplocation')) return;
 				let cE = this.createElement,
 					fm = document.createDocumentFragment(),
 					li = cE('html:li', {id: 'ucni-mplocation'}, fm);
@@ -292,7 +295,7 @@ location == 'chrome://browser/content/browser.xul' && (function(){
 		},
 
 		queryLocation(ip, callback){
-			var req = Cc['@mozilla.org/xmlextras/xmlhttprequest;1']
+			let req = Cc['@mozilla.org/xmlextras/xmlhttprequest;1']
 						.createInstance(Ci.nsIXMLHttpRequest);
 			req.open('GET', 'http://www.cz88.net/ip/index.aspx?ip=' + ip, true);
 			req.send(null);
@@ -313,24 +316,21 @@ location == 'chrome://browser/content/browser.xul' && (function(){
 			}
 		},
 
-		updateState(cwId){
-			cwId = cwId || this.getWinId();
-			var records = this.recordInner[cwId.currentInnerWindowID] || [],
-				state = this.getStateForSpdyVer((records.filter(re => re.isMainHost)[0] || {spdy: '0'}).spdy),
-				subDocsState = (records.filter(re => !re.isMainHost) || [{spdy: '0'}]).map(re => this.getStateForSpdyVer(re.spdy));
+		updateState(cwId = this.getWinId()){
+			let records = this.recordInner[cwId.currentInnerWindowID] || [],
+				state = this.getStateBySpdyVer((records.filter(re => re.isMainHost)[0] || {}).spdy),
+				subDocsState = (records.filter(re => !re.isMainHost) || [{}]).map(re => this.getStateBySpdyVer(re.spdy));
 			if(state == 0 && subDocsState.some(st => st != 0))
 				state = subDocsState.some(st => st == 7) ? 2 : 1;
 
 			state = ['unknown', 'subSpdy', 'subHttp2', 'active', 'spdy2', 'spdy3', 'spdy31', 'http2'][state];
 			if(this.icon.spdyState != state){
-				this.icon.setAttribute('state', state);
-				this.icon.spdyState = state;
+				this.icon.setAttribute('state', this.icon.spdyState = state);
 			}
 		},
 
-		getStateForSpdyVer(version){
-			version = version || '0';
-			var state = 3;
+		getStateBySpdyVer(version = '0'){
+			let state = 3;
 			if(version === '0'){
 				state = 0;
 			}else if(version === '2'){
@@ -345,86 +345,79 @@ location == 'chrome://browser/content/browser.xul' && (function(){
 			return state;
 		},
 
-		getWinId(browser){
-			browser = browser || gBrowser.selectedBrowser;
-			if(!browser) return {};
-			var windowUtils = browser.contentWindow
-								.QueryInterface(Ci.nsIInterfaceRequestor)
-								.getInterface(Ci.nsIDOMWindowUtils);
-			return {
-				currentInnerWindowID: windowUtils.currentInnerWindowID,
-				outerWindowID: windowUtils.outerWindowID
-			};
-		},
-
-		handleEvent(event){
-			if(event.type == 'click'){
-				if(event.button == 0){
-					let currentBrowser = this.currentBrowserPanel.get(this.panel);
-					if(gBrowser.selectedBrowser != currentBrowser || this._panelNeedUpdate){
-						let list = this.panel._list,
-							cwId = this.getWinId(),
-							ri = this.recordInner[cwId.currentInnerWindowID];
-						if(!ri) return;
-
-						if(this.panel.hasAttribute('overflowY'))
-								this.panel.removeAttribute('overflowY');
-						while(list && list.hasChildNodes())
-							list.removeChild(list.lastChild);
-
-						let noneMainHost = !ri.some(re => re.isMainHost);
-						ri.forEach((record, index) => {
-							//类似about:addons无主域名的情况
-							if(index == 0 && noneMainHost)
-								record.isMainHost = true;
-							this.dnsDetect(record, record.isMainHost);
-						});
-
-						this.currentBrowserPanel.set(this.panel, gBrowser.selectedBrowser);
-						//更新完毕
-						this._panelNeedUpdate = false;
-					}
-
-					//弹出面板
-					let position = (this.icon.boxObject.y < (window.outerHeight / 2)) ?
-							'bottomcenter top' : 'topcenter bottom';
-					position += (this.icon.boxObject.x < (window.innerWidth / 2)) ?
-										'left' : 'right';
-					this.panel.openPopup(this.icon, position, 0, 0, false, false);
-				}
-			}else if(event.type == 'TabSelect'){
-				this.panel.hidePopup();
-				this.updateState();
-			}else if(event.type == 'dblclick'){
-				let target = event.target;
-				while(!target.hasAttribute('ucni-ip')){
-					if(target == this.panel) return;
-					target = target.parentNode;
-				}
-				let currentBrowser = this.currentBrowserPanel.get(this.panel),
+		openPopup(event){
+			if(event.button !== 0) return;
+			let currentBrowser = this.currentBrowserPanel.get(this.panel);
+			if(gBrowser.selectedBrowser != currentBrowser || this._panelNeedUpdate){
+				let list = this.panel._list,
 					cwId = this.getWinId(),
 					ri = this.recordInner[cwId.currentInnerWindowID];
-				if(target.matches('li[ucni-ip]')){
-					this.queryLocation(target.getAttribute('ucni-ip'), result => {
-						//刷新所有同IP的location
-						ri.forEach(record => {
-							if(result.ip == record.ip){
-								record.location = result.location;
-								let text = this.setTooltip(target, record);
-								if(event.altKey){
-									Cc['@mozilla.org/widget/clipboardhelper;1']
-										.createInstance(Ci.nsIClipboardHelper)
-										.copyString(text);
-								}
+				if(!ri) return;
+
+				if(this.panel.hasAttribute('overflowY'))
+						this.panel.removeAttribute('overflowY');
+				while(list && list.hasChildNodes())
+					list.removeChild(list.lastChild);
+
+				let noneMainHost = !ri.some(re => re.isMainHost);
+				ri.forEach((record, index) => {
+					//类似about:addons无主域名的情况
+					if(index == 0 && noneMainHost)
+						record.isMainHost = true;
+					this.dnsDetect(record, record.isMainHost);
+				});
+
+				this.currentBrowserPanel.set(this.panel, gBrowser.selectedBrowser);
+				//更新完毕
+				this._panelNeedUpdate = false;
+			}
+
+			//弹出面板
+			let position = (this.icon.boxObject.y < (window.outerHeight / 2)) ?
+					'bottomcenter top' : 'topcenter bottom';
+			position += (this.icon.boxObject.x < (window.innerWidth / 2)) ?
+								'left' : 'right';
+			this.panel.openPopup(this.icon, position, 0, 0, false, false);
+		},
+
+		updataLocation(event){
+			let target = event.target;
+			while(!target.hasAttribute('ucni-ip')){
+				if(target == this.panel) return;
+				target = target.parentNode;
+			}
+			let currentBrowser = this.currentBrowserPanel.get(this.panel),
+				cwId = this.getWinId(),
+				ri = this.recordInner[cwId.currentInnerWindowID];
+			if(target.matches('li[ucni-ip]')){
+				this.queryLocation(target.getAttribute('ucni-ip'), result => {
+					//刷新所有同IP的location
+					ri.forEach(record => {
+						if(result.ip == record.ip){
+							record.location = result.location;
+							let text = this.setTooltip(target, record);
+							if(event.altKey){
+								Cc['@mozilla.org/widget/clipboardhelper;1']
+									.createInstance(Ci.nsIClipboardHelper)
+									.copyString(text);
 							}
-						});
+						}
 					});
-				}
+				});
 			}
 		},
 
+		highlightHosts(event){
+			let host = event.target.getAttribute('host');
+			if(!host) return;
+			Array.prototype.forEach.call(this.panel._list.querySelectorAll(`p[host="${host}"]`), p => {
+				let hover = p.classList.contains('ucni-hover');
+				if(event.type === 'mouseover' ? !hover : hover) p.classList.toggle('ucni-hover');
+			});
+		},
+
 		setTooltip(target, obj){
-			var text = [];
+			let text = [];
 			if(obj.counter){
 				text.push('连接数:   ' + obj.counter);
 				obj.scheme && obj.scheme.length && text.push('Scheme:   ' + obj.scheme.join(', '));
@@ -440,12 +433,41 @@ location == 'chrome://browser/content/browser.xul' && (function(){
 			return text;
 		},
 
+		handleEvent(event){
+			switch(event.type){
+				case 'TabSelect':
+					this.panel.hidePopup();
+					this.updateState();
+					break;
+				case 'dblclick':
+					this.updataLocation(event);
+					break;
+				case 'mouseover':
+				case 'mouseout':
+					this.highlightHosts(event);
+					break;
+				default:
+					this.openPopup(event);
+			}
+		},
+
+		getWinId(browser = gBrowser.selectedBrowser){
+			if(!browser) return {};
+			let windowUtils = browser.contentWindow
+								.QueryInterface(Ci.nsIInterfaceRequestor)
+								.getInterface(Ci.nsIDOMWindowUtils);
+			return {
+				currentInnerWindowID: windowUtils.currentInnerWindowID,
+				outerWindowID: windowUtils.outerWindowID
+			};
+		},
+
 		createElement(name, attr, parent){
-			var e = document.createElementNS(!!~['panel', 'image'].indexOf(name) ? 
+			let e = document.createElementNS(!!~['panel', 'image'].indexOf(name) ? 
 				'http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul' :
 				'http://www.w3.org/1999/xhtml', name);
 			if(attr){
-				for (var i in attr) {
+				for (let i in attr) {
 					if(typeof attr[i] == 'function')
 						e[i] = attr[i];
 					else if(i == 'text')
@@ -467,7 +489,7 @@ location == 'chrome://browser/content/browser.xul' && (function(){
 		},
 
 		setStyle(){
-			var sss = Cc['@mozilla.org/content/style-sheet-service;1'].getService(Ci.nsIStyleSheetService);
+			let sss = Cc['@mozilla.org/content/style-sheet-service;1'].getService(Ci.nsIStyleSheetService);
 			sss.loadAndRegisterSheet(Services.io.newURI('data:text/css,' + encodeURIComponent(`
 			@-moz-document url("chrome://browser/content/browser.xul"){
 				#NetworkIndicator-icon{
@@ -530,6 +552,7 @@ location == 'chrome://browser/content/browser.xul' && (function(){
 					flex:1;
 					text-align: center;
 					margin-left: 1ch;
+					max-width:23em;
 				}
 
 				#NetworkIndicator-panel li:nth-child(2n-1){
@@ -538,11 +561,15 @@ location == 'chrome://browser/content/browser.xul' && (function(){
 				#NetworkIndicator-panel li:not(#ucni-mplocation):hover{
 					background-color: #ccc;
 				}
+				#NetworkIndicator-panel p.ucni-host,
 				#NetworkIndicator-panel li{
 					display:flex;
 				}
 				#NetworkIndicator-panel li>span:first-child{
 					min-width: 14ch;
+				}
+				#NetworkIndicator-panel li>span:last-child{
+					flex: 1;
 				}
 
 				#NetworkIndicator-panel p[scheme="http"]{
@@ -571,12 +598,19 @@ location == 'chrome://browser/content/browser.xul' && (function(){
 					border-radius: 3px;
 					float: right;
 					padding: 0 2px;
-					margin-top:2px;
+					margin: 2px 0;
 				}
 				#NetworkIndicator-panel p.ucni-host[counter]::before{
 					float: left;
 					background: #FF9900;
 					content: attr(counter);
+				}
+				#NetworkIndicator-panel p.ucni-hover:not(:hover){
+					text-decoration:underline wavy orange;
+				}
+				#NetworkIndicator-panel p.ucni-host.ucni-hover{
+					color: blue;
+					text-shadow:0 0 1px rgba(0, 0, 255, .4);
 				}
 
 				#NetworkIndicator-panel[overflowY] .panel-arrowcontent{
@@ -597,4 +631,4 @@ location == 'chrome://browser/content/browser.xul' && (function(){
 	};
 
 	networkIndicator.init();
-})();
+}
