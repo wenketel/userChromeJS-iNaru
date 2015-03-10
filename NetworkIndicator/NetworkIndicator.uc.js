@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name			Network Indicator
-// @version			0.0.2
+// @version			0.0.3
 // @compatibility	FF34+
 // @description		显示当前页面连接IP 和SPDY、HTTP/2
 // @include			main
@@ -12,10 +12,16 @@ if (location == 'chrome://browser/content/browser.xul') {
 
 	let networkIndicator = {
 
+		autoPopup: 600, //鼠标悬停图标上自动弹出面板的延时，非负整数，单位毫秒。0为禁用。
+
 		init(){
 			if(this.icon) return;
 			this.setStyle();
 			this.icon.addEventListener('click', this, false);
+			if(this.autoPopup){
+				this.icon.addEventListener('mouseenter', this, false);
+				this.icon.addEventListener('mouseleave', this, false);
+			}
 			this.panel.addEventListener('dblclick', this, false);
 			this.panel.addEventListener('mouseover', this, false);
 			this.panel.addEventListener('mouseout', this, false);
@@ -168,8 +174,9 @@ if (location == 'chrome://browser/content/browser.xul') {
 						if(this.panel.hasAttribute('overflowY'))
 							this.panel.removeAttribute('overflowY');
 						let list = this.panel._list;
-						while(list && list.hasChildNodes())
+						while(list.hasChildNodes())
 							list.removeChild(list.lastChild);
+						list._minWidth = 0;
 					}
 				}
 			}else{
@@ -214,9 +221,10 @@ if (location == 'chrome://browser/content/browser.xul') {
 				p = null;
 
 			if(!li){//不存在相同的IP
-				let fragment = document.createDocumentFragment();
+				let fragment = document.createDocumentFragment(),
+					ipSpan = null;
 				li = cE('html:li', {'ucni-ip': record.ip}, fragment);
-				cE('html:p', {class: 'ucni-ip', text: record.ip + '\n'}, cE('html:span', {}, li));
+				cE('html:p', {class: 'ucni-ip', text: record.ip + '\n'}, ipSpan = cE('html:span', {}, li));
 				// + '\n' 复制时增加换行格式
 				p = cE('html:p', {class: 'ucni-host', host: record.host, scheme: record.scheme, counter: 1, text: record.host + '\n'}, cE('html:span', {}, li));
 				p._connCounter = 1;
@@ -232,6 +240,18 @@ if (location == 'chrome://browser/content/browser.xul') {
 					list.appendChild(fragment);
 					//不存在相同的IP且非主域名
 					this.setTooltip(li, record);
+				}
+
+				//调整容器宽度以适应IP长度
+				let minWidth = record.ip.length - record.ip.split(/:|\./).length / 2 + 1;
+				if(list._minWidth && minWidth > list._minWidth){
+					Array.prototype.forEach.call(list.querySelectorAll('li>span:first-child'), span => {
+						if(!span._width || span._width < minWidth)
+							span.style.minWidth =  `${span._width = list._minWidth = minWidth}ch`;;
+					});
+				}else{
+					if(!list._minWidth) list._minWidth = minWidth;
+					ipSpan.style.minWidth = `${ipSpan._width = list._minWidth}ch`;
 				}
 			}else{//相同的IP
 				p = li.querySelector(`.ucni-host[host="${record.host}"]`);
@@ -252,7 +272,7 @@ if (location == 'chrome://browser/content/browser.xul') {
 					li.classList.add('ucni-MainHost');
 					if(list.firstChild != li){
 						list.insertBefore(li, list.firstChild);
-						li.insertBefore(p, li.firstChild);
+						li.lastChild.insertBefore(p, li.lastChild.firstChild);
 					}
 					this.setMainHostLocation(record, list);
 				}
@@ -296,24 +316,31 @@ if (location == 'chrome://browser/content/browser.xul') {
 
 		queryLocation(ip, callback){
 			let req = Cc['@mozilla.org/xmlextras/xmlhttprequest;1']
-						.createInstance(Ci.nsIXMLHttpRequest);
-			req.open('GET', 'http://www.cz88.net/ip/index.aspx?ip=' + ip, true);
+						.createInstance(Ci.nsIXMLHttpRequest),
+				url = '',
+				regex = null;
+			if(ip.contains(':')){
+				regex = /id="Span1">(?:IPv\d[^:]+:\s*)?([^<]+)(?=<br)/i;
+				url = `http://ip.ipv6home.cn/?ip=${ip}`;
+			}else{
+				regex = /"InputIPAddrMessage">([^<]+)/;
+				url = `http://www.cz88.net/ip/index.aspx?ip=${ip}`;
+			}
+			req.open('GET', url, true);
 			req.send(null);
+			req.timeout = 10000;
+			req.ontimeout = req.onerror = () => {
+				callback({ip: ip, location: 'ERR 查询过程中出错，请重试。'});
+			};
 			req.onload = () => {
 				if (req.status == 200) {
 					try{
-						callback({
-							ip: ip,
-							location: req.responseText.match(/"InputIPAddrMessage">([^<]+)/)[1].replace(/\s*CZ88.NET.*/, '')
-						});
+						callback({ip: ip, location: req.responseText.match(regex)[1].replace(/\s*CZ88.NET.*/, '')});
 					}catch(ex){
-						callback({
-							ip: ip,
-							location: 'ERR 查询过程中出错，请重试。'
-						});
+						req.onerror();
 					}
 				}
-			}
+			};
 		},
 
 		updateState(cwId = this.getWinId()){
@@ -347,6 +374,7 @@ if (location == 'chrome://browser/content/browser.xul') {
 
 		openPopup(event){
 			if(event.button !== 0) return;
+			event.view.clearTimeout(this.panel._showPanelTimeout);
 			let currentBrowser = this.currentBrowserPanel.get(this.panel);
 			if(gBrowser.selectedBrowser != currentBrowser || this._panelNeedUpdate){
 				let list = this.panel._list,
@@ -356,8 +384,9 @@ if (location == 'chrome://browser/content/browser.xul') {
 
 				if(this.panel.hasAttribute('overflowY'))
 						this.panel.removeAttribute('overflowY');
-				while(list && list.hasChildNodes())
+				while(list.hasChildNodes())
 					list.removeChild(list.lastChild);
+				list._minWidth = 0;
 
 				let noneMainHost = !ri.some(re => re.isMainHost);
 				ri.forEach((record, index) => {
@@ -446,6 +475,14 @@ if (location == 'chrome://browser/content/browser.xul') {
 				case 'mouseout':
 					this.highlightHosts(event);
 					break;
+				case 'mouseenter':
+				case 'mouseleave':
+					event.view.clearTimeout(this.panel._showPanelTimeout);
+					if(event.type === 'mouseenter'){
+						this.panel._showPanelTimeout =
+							event.view.setTimeout(this.openPopup.bind(this, event), this.autoPopup);
+					}
+					break;
 				default:
 					this.openPopup(event);
 			}
@@ -493,6 +530,7 @@ if (location == 'chrome://browser/content/browser.xul') {
 			sss.loadAndRegisterSheet(Services.io.newURI('data:text/css,' + encodeURIComponent(`
 			@-moz-document url("chrome://browser/content/browser.xul"){
 				#NetworkIndicator-icon{
+					visibility: visible !important;
 					list-style-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAAAQCAYAAADeWHeIAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAKnAAACpwB9NLfEgAAABx0RVh0U29mdHdhcmUAQWRvYmUgRmlyZXdvcmtzIENTNui8sowAAATqSURBVGiB7dnPS9t3HMfx5/uTb2Oy6VpnIEsrCoNcMkxt2UHmRWEXkdHL7kPoD2xHD/U6cshAKBSmS1ud3U4T+gfk4KGz9rBTJYVSPHkq3WoRXGnTjmnM973D91sTTb7ffJOcmu0NknyT7+P7+pjv5/PO96uiqvxf/92y/N7M5XIDxphJVY2LSFJVNyORyOz58+f3ghxcbhQGsMwkaByVJKKbvInM6ncpTy8iVVuvBsD1SBJ0E47NQnQv0MTNyAAwCcSBJLAJzJLVYOMvnBrA2JMocUSSqG4S+XhWUxsd430ngDHma+Ar96SUjDGBTz4AIceD4zEh35NfZwSHPWYWok14XI/rg598J14dL64PEfjDf1+88bKLi4u9wFjVS/nLly9vBM2WX570Ioe9Xj0d2MPbmnzoDu4zUuuzGnz8T070glZ5yevprY7znhOgVCp9AfS4m1tdXV0/BQ0H4PVexStbvG3Ss38oH6wmPUc8zfm9aJWXLbpOdKT3/AoQkXNVz5d3d3djt2/f7rdtOx4Oh9cuXrz4xn8EFY+RZU7sxuTHx/3Y5TjRyJpeSgX3sAz7MXjTD3Ycjq0BDTxHPDEy0o9zPbBGVv29yDlwrzNEl9ndjsnjRD9ljROx1zS13RG+7gTI5XJDxphPAVTVBqZUNQJ0i8hqsVhc8c2eKwwhjge1UabY1wjY3RhZ5fftFS6lfI7wagik4pEpcPJBVuHlCiS8eUaGANdjA1OA61kF/Mdf+GQI4+ar69WKYNONsMr2Zyv4DP998nUngDHmGyAEICIGiLkXgjvGmKWZmZl973iAigfHg4Cygwkt6a9jrXnYAbMEJ/cPZnf9qvK4HtezRFb9841UvLheAGSHkC7p2FrH+JoJcP36dau7u7ugqhvAUxEZVdVxABFZmJ6e3vbLlp8fWJjjBWzHg4yC41FZ0G/Tvh6eW0AB6nhkAT709xlxPa5nFHA9C2TVf/wPxOJ4vIDKBuhTREZR14tZ0PTzjvI1EyCdTpcnJibuvtu+efNmWpzlf//KlSurfuEAfD5W1mEOvPzwKO3e3N/Xa2ca+2KiTI/crbzwOg2Oh57GHspkteIzksZpH/fJamM/Rll5URn/o5NpRJ3xn/mj43zNXcDExMRBb52bm+sDRlS1GA6HbzUMB3S40ptl8WEfwghoEdMVyNMjVb39ZR+4HiuYz1b9hSgjfcCIfM8YcEvEObaI6LufmvFT8fLwoz7QEZQiXcHyg/h285v2Z1+McfZF9uj+IqKet4EAlmUlRSQuIvMXLlz4K8gHcKj+sZIgcWyZ16up5j0hxyPzEG3Bk8S56oesHnhVFVUVL3RQ1gdJhDgSmtfUs+bzPXy7+U37R6e+9NrfdwIYY8ZVdT1Q669/hHHQ9UCtv27JOOh6wNZfr8aBdXBm+8FRPVZPTRkzjrIeqPU24dvNb9Zz9s/fvPb3nAC5XC6mqoOhUOhOw6A6JTcKMYwOYpuWPLyKAYMgrfmMuJ474Kya6rcbrSIpnIqh9iDGau33b+DbyQ/SAaq93/5+HSBh23Z+enp60y/IsywSlO28XhtuzUMC7Dz0tOHJk9W6vvEqKiewJa/Dz1rM9/ft5AfrABV/dP/q537/DCpFo9F7/iE+ZVPi7zY8lCDcpuceVFb/0Uf/MiWivW3ke/t285v19brfu8d/ARECPGiONeyhAAAAAElFTkSuQmCC");
 					-moz-image-region: rect(0px 16px 16px 0px);
 				}
@@ -537,9 +575,7 @@ if (location == 'chrome://browser/content/browser.xul') {
 					display: flex;
 				}
 				#NetworkIndicator-panel p.ucni-ip{
-					font-weight: bold;
-					font-size: 90%;
-					line-height: 1.4rem;
+					font: bold 90%/1.5rem Helvetica, Arial !important;
 					color: #2553B8;
 				}
 				#NetworkIndicator-panel #ucni-mplocation>p>span{
@@ -564,9 +600,6 @@ if (location == 'chrome://browser/content/browser.xul') {
 				#NetworkIndicator-panel p.ucni-host,
 				#NetworkIndicator-panel li{
 					display:flex;
-				}
-				#NetworkIndicator-panel li>span:first-child{
-					min-width: 14ch;
 				}
 				#NetworkIndicator-panel li>span:last-child{
 					flex: 1;
