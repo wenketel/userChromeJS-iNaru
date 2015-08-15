@@ -13,7 +13,7 @@
 location == 'chrome://browser/content/browser.xul' && (function(){
 var tiebaNotification = {
 
-	interval: 2 * 1000 * 60, //检测间隔（单位毫秒），2*100*60=2分钟
+	interval: 2 * 1000 * 60, //检测间隔（单位毫秒），2*1000*60=2分钟
 
 	showNotification: true, //显示弹出通知面板，默认显示 true, 关闭设置为 false
 
