@@ -173,7 +173,7 @@ location == 'chrome://browser/content/browser.xul' && (function () {
 				}},
 			'E-Hentai': 	{//本人无法打开这个网站
 				icon: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAOklEQVQ4jWN4dPvkf0owA1UMSGMTxMDIitDFkPnUNQCXM4eQAcgS2NjY1FHXgIEPA6oFIv1T4oDmRgBHn8G//HQP5wAAAABJRU5ErkJggg==',
-				both:{url:'http://gu.e-hentai.org/image_lookup.php', method: 'POST',
+				both:{url:'http://ul.exhentai.org/image_lookup.php', method: 'POST',
 					parameters:{
 						qs: ['sfile={$IMGDATA}', 'f_sfile=File Search', 'fs_similar=on', 'fs_exp=on']
 					}
