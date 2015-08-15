@@ -3,11 +3,12 @@
 // @author         crab
 // @include        main
 // @description    贴吧消息提醒按钮
-// @version        0.1.5
+// @version        0.1.6
 // @note           [20141103.0.1.2]添加关闭通知面板的选项，改进tooltip显示，和修正一些错误。
 // @note           [20141103.0.1.3]增加点击按钮时显示查询状态标志。
 // @note           [20141104.0.1.4]尝试修复网络错误时几率的异常状态。
 // @note           [20150126.0.1.5]修复因贴吧抽风无法清除状态的错误；一些兼容问题。
+// @note           [20150815.0.1.6]修复一个小错误。
 // ==/UserScript==
 location == 'chrome://browser/content/browser.xul' && (function(){
 var tiebaNotification = {
@@ -19,9 +20,9 @@ var tiebaNotification = {
 	info: {
 		icon: {
 			//大图标
-			notification: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAALEgAACxIB0t1+/AAAABx0RVh0U29mdHdhcmUAQWRvYmUgRmlyZXdvcmtzIENTNui8sowAAAUCSURBVFiFxVdfbFNVGP+dc29vZ9st22AyV6ErZRg1rGMl2aCDEexiohkmDpEEjS/GJePBBCMhKIkvvunQROSNyIMkRvYgD0okxIHutmRlMEbnoE63sY45oLP7Z3vvuff4cNvS1W7rGIRfcl/O+b5zfuc7v+873yWcczxJiAAgSRIArAXwwjL97wO4CkADYAVQA8CWnOsBcHcxZ0VRDAIA1nq9DV/W1nrq8t2ZUoKJiYm7Z858/52qqp8VFRUdamnZs89mK7QBnHd2dv7c13f9EIB7i62TIuDeunWr1+2ueTpfAgDAOa+QZfni8PCQZc2a8tW7dr20MTUXiURe7Ou7XgHgmRyuYzCilyaga5qmL2dzAFBVNe3DuQ7GmC6KIgUAh8Oxbvfu144LgiBkuZFbt27eCIVCRwGMi1gAjKm6rs8XKOcckiQRQghZilxtrae8ttZTnmsuGOx2hEKhDgDnchKIxf5RT5z4+lQ0Gp1UVaYBxp2bTJLU3Nzc4vU2OJYisBgEQRQACMCDK5iHRELRQqFQwOl0uquq1jk451xV1UQg4P8qGo3uBLAiAolEXAGgLEggGWLi8zW9umNH43oAmJub0wIBf1ce0QcAdHX9Ntzf39+brQFCCBkcHPwDRvrmJpCCrutpkWka0wGwvHYHMDExMX7p0sWjAKazpgiM+jC9JIGVIHlyAcBfi9nRx0UgXzxxAiu+AkoJASDNzMzMAA/qBmNMAbAawMs53EIARh8JAUVRVYej8uPm5uYWSoV0irjdNdV2u/0kIfR/Ub5yJRiQ5a73AYyumEA8/m+8rq5+W11dvT1z3OVy2Vwuly2Xj9ksNchyVw2A0UeiAb7MpkLTNA5ABx5TGmqaxhljPFW0KCUQRVPmYdOEHzkBzjlOn/72fCgUuiGKoqjrum61Wq1tbQfeKSkpkbLtH0sERkZGhiOR0U8BqDBO+0YikXg7l20mgbSCk5FbqOhn2BHkUrkkSSYYVTAKgIqiWE5p7uVSzvOeeEIoAUCM9sqA2VwgVFRUOHVd19Lsk83HckWYiVQErsmyfHFycrIaAMbGxiLFxcVrnU5nacap6LZt3kZZ7uq0WCxWSimZmpqavn//XkwQhIe+ypRjJBDwHwwE/Kl3Xti7980vVq1aNU8027fvcPv9/l9Pnfrm3eTQHACFUvrKwxLIvL8IjJfL2ti480Ofr8mdbVxaWiq1tra+53Su35ccGs61KGOqCqNVLwRgYYyNZ7d3KaRDRwg57PFscdfX1zd4PFvsoijmVI3Tud528OAHrcFgt+/y5cClgYGBk9k2dvuzjlhs6qMHaWh5ymw25yx6KQJlmzZVP9fWdmCvyTSvYCAej2u3b4/MVlVtLEqNFRcXSz5f0/MezxbXkSOH72gaSzcqhBDs3/9WE2PMt0ghSiM1KFksFkv25oyp+tmzP8jt7Z+39/RcGc92LiwsNBUUFEjZOSAIAjGbzVSSJCpJEl1o88wIzMskzjnC4fDUhQvnz8uyfBzA78eOtXe3tOz5xOttqC4rKzMDgCiKhHOOfNr0TCRrB8kkEB0cHPzz3Lmf+hhjbGhoKBwMdl/VNK0DQDhp82NHx5m/Ozt/ed3trtlcWVm5YXZ2djoWi82Ew+H+QMC/gVJhyceNUoLe3t4eGD0BSPJnAwAKAFTDUO+d5JdLumYA9uQ3C+AagFIAm5F/h3UTwJCiKAaBJ4n/AFjW3pvbkY0lAAAAAElFTkSuQmCC',
+			notification: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAilBMVEUAAAAFBQV2dneioqRycnQFBQWkpKaTk5VcXF0kJCUWFhYFBQUFBQVoaGkFBQUpKSoFBQWbm5xOTk8FBQVUVFUxMTEdHR0FBQVZWVpHR0gICAgFBQUFBQUFBQWXl5lwcHE8PD0FBQVlZWZCQkOEhIZ4eHkFBQWfn6EFBQWQkJIFBQUFBQUFBQWoqKpx8ZbhAAAALXRSTlMAR+f95Ur++M6RhGQO2xSWavq+GsWdijLKtnk7LCH546kC17Dy6Qj8S/dhTEEeuaDEAAABNUlEQVQ4y7XSyXaDIBSAYTDGCDHYBgWViGOGNuX9X69AaSRDTTf5F+o591vIAP4RhV68AwcBIfHnQ+gVVx3uwzD3xHmv/FCS6mexs1m2DPz5QoNIqSCz5fQXRAvTBFwhdEDmDGPGmluwPzmwWqNhaEV8Cxp4ARuljm8TaIbShIgP3j1Q7GpTAv4EHNheAwjTIIM2+gAw1GgwNqFpoPcAb9XU/vwEBMtHwB1NNAdKhlAuZ0BOkuTzYxaArlo5cNJArgOzwkLP7gFt+36LpblnrO+L6gYYIYSIlU4yIfguuwZWwOGoTCMSxAHvJ0HVms21yT7lmVtmKh0g+cLMjuMPud8o2ppBlOHAvg1w+WBsv+iyWLllXt/qA47jtqr1F8flJq7SJrxU1sAIzimwHWrBOwKnavC8b+i1U97oH4WFAAAAAElFTkSuQmCC',
 			//按钮图标
-			button: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABIAAAAkCAYAAACE7WrnAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAALEgAACxIB0t1+/AAAABx0RVh0U29mdHdhcmUAQWRvYmUgRmlyZXdvcmtzIENTNui8sowAAAUUSURBVEiJrZRbbFRVFIa/dfbpdNKxgFZHKReZBhojoZGLGIxAABF4qMGS0PhCSdCUW0J8MAQBmQcMkEh84PKkBoxkBAxaiZfUQCqV0lC0SclgKyWkhTLQAC00TBlgzvJh9mlOmxJ8YL2c2bPW/tf+/3URVeVpmAuwfPnyGcAyVUVEgn5HVW8CXwAviMg6VT0nIj8Gg44cOZIDUtXlIvKxD+K/0p4fisjXQJmqbgYuqGoGMCJiVLUdSLr2gmfB/wJqROQh8Azwof2iFl1EXlXVX/ykInICeNsJBqnqT6p6HMhT1f3AeSAUeB2q2iMidcApVT2tqn8MaCQiPh1PRJYBW4AW4NFQUUWkCVgUOOfEHBoHZKzoj3JxA0k08HsAxD8PAvIdwQB79mySIEWCVXYDwUMp+GCPgJeA9db1OlBn/Qb4Gdg5oNFwr7LmAc+r6iz737OqOjdwzwN2+lUbRGWokOSK4Nn++UBEFgE7rC8T1ChkX5InImoBFAgDBeQ6XETkvqr+oKq1InIyKIVrv82q+qeI/K2qSy3QK0CtiNwB+mwXi4gUALdtksFVE5FvRWS2qvaKyHvWuR44BrwLdKtqXu6epi3A/SB9n9oo4BPgMDDCOmPAr8BqS/2hiOTbRO+IyLygnj61Oar6mdXpDPAVsFlEYsB+VZ0rIo6l8+WQVskHcF3XpaKi4hJwCDgvIgeAG8BJYKWqFgMdwBFVLRERfzSx4L+7rosYY3ga5lObCZQ9JqYHqCe3TmYD/wBnhwOauW7duu/mzZv3MrneCZpcv379/oYNGw6OHz++aPv27RUNDQ1X9u3bt4rc6DjATexim7Z48eIJS5YsEYaxvr6+gk2bNuWVlJSMrqysdKdNmxYLh8MHRcQxxkhnZ+etRCLxkQs8ymQyCkg8Hr9x+vTpVoBIJBKOx+NvxGIxADzP8wAmTZrErl27xvmJLl++XJxIJOa42J0DcOLEiZaysrLY9OnTx27btu379vb2GaWlpYOq0dbWxrFjx26JiDiOIx0dHbeAU24wyHVds3DhwpKlS5c6hw4dGhscZt+SyWR269atG4Euq1E3cG4QkIhIJpPxACebzWaDjed5ngI4jiPkltxvQ6v2RMtms14oFDIWCKAI2Og4zjjP8+qB+icCeZ5HUVFRYXV19ZsA8+fPd5qamnZCbvKbm5tXVVdXr/xfQCNHjoxMnTrVAIRCIcrKyvAnIhKJhIHSxwJpQGVfn56eHiorK091d3f3RqPRUUePHp2TzWYBPBfIC4fD/l4amEhVJRwOS2FhIY7jiIjQ399PY2Njazqd3lRQULCjv79/ji2IuEBzbW1tRyqVerGrq+tmLBbLA5g8efL448ePX+zs7BzT19eXNsYgIkQikfx0Op2ORCL5g9aJMQZjzCxjzPtr1669mM1mVVW1paVFx4wZ840xpiIajR5IpVLa1dWloVBovzGmJBQK7U+lUnrhwgU1xmzBGFNYWlp6ePfu3b337t1TVdUHDx6oqmoymdQ1a9b8G41GD1y5ckXv3LmjVVVV58vLyxuqqqrO3717V5PJpBpjNmOMWRCPx6+rtb179/aVl5c3nDlzRlVV0+m0Tpky5cerV6/qcNbW1qbGmE9d4FJTU1P7nj17InV1da01NTWfA5cbGxtXr1ixYkFxcfHIa9eu3U4kEr0TJ04cQW7ViP9tbW3tBc76G3IC8BqQBC5a+ULADOA5covtLWD0MJ1yFaj/Dyv2hX/k+Vy/AAAAAElFTkSuQmCC'
+			button: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABIAAAAkCAMAAACzM5rVAAABJlBMVEUAAABUVFSvr69UVFQDAwNCQkJVVVVVVVVUVFRUVFRUVFSrq6tUVFQDAwMDAwOvr69UVFRVVVUDAwNUVFSoqKhUVFRpaWk/Pz8WFhZVVVVVVVUDAwNUVFQuLi4jIyMQEBBUVFSVlZWHh4dUVFRNTU1UVFRGRkYFBQUDAwMDAwNVVVVVVVUDAwMDAwOdnZ2MjIx0dHRVVVUNDQ1UVFQDAwNVVVWxsbF4eHhubm5fX19TU1M8PDxVVVUbGxtUVFRUVFRUVFQDAwMDAwMDAwMDAwOnp6eAgIB/f39cXFwDAwNVVVUDAwMDAwNUVFRUVFQDAwMDAwP///9VVVVUVFTw8PD09PTV1dXl5eXn5+fg4ODOzs79/f36+vra2trX19e3t7fIyMjHx8fD43mMAAAAUXRSTlMAuv2HZL9FEn18S/zvezf86sFlHPv62ryfg3ZJ9bGpm0/07d3GxMKWV0I8KiEO9/DhvJljUTH95d7TzLuyo6KajIA+GAf66OjSamhoX1xAKyVVT01FAAABpklEQVQoz23OZ3PiMBCA4cVgWoyBc+K4gGN675BeLuV63ZXBAVLu/v+fOEnDkMxNXn17RlotvNUsKnPAsP0NvScixmgvEWeVdNrvcIrSadKxcwVOxIhGkpKzpDESt7R8vpYUxFI2+RFBEeBJSqZYWhC9JvqPSFKhc05ilrMhxqmdk8vkt7ME7U3iUYrIVW3+MM/aOS0BcUk/av4lOanzWU4zIM1J9FNjlQ4Y2vZWIsXnUuWrkStM4jYT5DOqTSpEbY14TPzYuXQSYNhXxlWEN3LgzfSYbHrb/a5v5FjJ8pRSw9s9bt3c/AL49oyy4KCOj8Ojo88tiCn4SVWrq+BARdHyGt4peGb2L3bmnJ7K5bLZErSvoCppJ+a6OghSd3FfkhID3guN63iYyTSat1sKvCzOV6tVv/lCxSU+rBGfMq8pqBfrwSIDX55R/YBnh+viMhz3xvec9GHf+4OmWfLC0LqzBIHeNNe4uJha92Gj2xDU8wZzfMCFaYXBSfVEzGp9RCxV/+K8GKLo8Rq61dJpU7eGA2ugZPkpuwDd6W+AO93tuTGR2/sH9f5ZJ/rS22cAAAAASUVORK5CYII='
 		},
 		title: '贴吧消息提醒',
 		neterr: '网络出错。',
@@ -109,13 +110,14 @@ var tiebaNotification = {
 
 	updateButton: function(){
 		var that = this,
+			_loading = null,
 			button = this._button;
 		if(button){
 			button.onclick = function(event){
 				if(event.button != 0) return;
 				clearInterval(that._loading);
 				that.setBadge('\u2022\u2000\u2000', that.info.loading);
-				that._loading = window.setInterval(function(){
+				_loading = that._loading = setInterval(function(){
 					try{
 						let index = button.getAttribute('badge').indexOf('\u2022'),
 							bText = '';
@@ -124,7 +126,7 @@ var tiebaNotification = {
 						}
 						this.setBadge(bText, this.info.loading);
 					}catch(ex){
-						clearInterval.apply(this, arguments.callee);
+						clearInterval(_loading);
 					}
 				}.bind(that), 500);
 				if(typeof Promise == 'function'){
@@ -312,7 +314,7 @@ var tiebaNotification = {
 					observe: function(subject, topic, data) {
 						if(topic == 'alertclickcallback'){
 							var ip = (('privateTab' in window) && !isWindowPrivate());
-							ip && privateTab.readyToOpenTab(false);
+							ip && privateTab.readyToOpenTabs(false);
 							for(var i of message){
 								clearTiebaMsg(i.type);
 								gBrowser.loadOneTab(i.url, null, null, null, false, false);
@@ -428,5 +430,3 @@ var tiebaNotification = {
 tiebaNotification.init();
 
 })();
-
-
