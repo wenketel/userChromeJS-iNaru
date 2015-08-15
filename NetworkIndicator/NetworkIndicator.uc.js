@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name			Network Indicator
-// @version			0.0.3
+// @version			0.0.8
 // @compatibility	FF34+
 // @description		显示当前页面连接IP 和SPDY、HTTP/2
 // @include			main
@@ -10,9 +10,81 @@
 
 if (location == 'chrome://browser/content/browser.xul') {
 
+	const AUTO_POPUP = 600; //鼠标悬停图标上自动弹出面板的延时，非负整数，单位毫秒。0为禁用。
+
+	const DEBUG = false; //调试开关
+	const GET_LOCAL_IP = true; //是否启用获取显示内(如果有)外网IP。基于WebRTC，
+								//如无法显示，请确保about:config中的media.peerconnection.enabled的值为true，
+								//或者将上面的 “DEBUG”的值改为true,重启FF，打开浏览器控制台（ctrl+shift+j）,
+								//弹出面板后，将有关输出适宜打ma，复制发给我看看。
+								//还有可能会被AdBlock, Ghostery等扩展阻止。
+								//若关闭则只显示外网IP
+
+	const HTML_NS = 'http://www.w3.org/1999/xhtml';
+	const XUL_PAGE = 'data:application/vnd.mozilla.xul+xml;charset=utf-8,<window%20id="win"/>';
+	let promise = {};
+	try{
+		Cu.import('resource://gre/modules/PromiseUtils.jsm', promise);
+		promise = promise.PromiseUtils;
+	}catch(ex){
+		Cu.import('resource://gre/modules/Promise.jsm', promise);
+		promise = promise.Promise;
+	}
+	let HiddenFrame = function() {};
+	HiddenFrame.prototype = {
+		_frame: null,
+		_deferred: null,
+		_retryTimerId: null,
+		get hiddenDOMDocument() {
+			return Services.appShell.hiddenDOMWindow.document;
+		},
+		get isReady() {
+			return this.hiddenDOMDocument.readyState === 'complete';
+		},
+		get() {
+			if (!this._deferred) {
+				this._deferred = promise.defer();
+				this._create();
+			}
+			return this._deferred.promise;
+		},
+		destroy() {
+			clearTimeout(this._retryTimerId);
+			if (this._frame) {
+				if (!Cu.isDeadWrapper(this._frame)) {
+					this._frame.removeEventListener('load', this, true);
+					this._frame.remove();
+				}
+				this._frame = null;
+				this._deferred = null;
+			}
+		},
+		handleEvent() {
+			let contentWindow = this._frame.contentWindow;
+			if (contentWindow.location.href === XUL_PAGE) {
+				this._frame.removeEventListener('load', this, true);
+				this._deferred.resolve(contentWindow);
+			} else {
+				contentWindow.location = XUL_PAGE;
+			}
+		},
+		_create() {
+			if (this.isReady) {
+				let doc = this.hiddenDOMDocument;
+				this._frame = doc.createElementNS(HTML_NS, 'iframe');
+				this._frame.addEventListener('load', this, true);
+				doc.documentElement.appendChild(this._frame);
+			} else {
+				this._retryTimerId = setTimeout(this._create.bind(this), 0);
+			}
+		}
+	};
+
 	let networkIndicator = {
 
-		autoPopup: 600, //鼠标悬停图标上自动弹出面板的延时，非负整数，单位毫秒。0为禁用。
+		autoPopup: AUTO_POPUP,
+
+		_getLocalIP: GET_LOCAL_IP,
 
 		init(){
 			if(this.icon) return;
@@ -22,9 +94,9 @@ if (location == 'chrome://browser/content/browser.xul') {
 				this.icon.addEventListener('mouseenter', this, false);
 				this.icon.addEventListener('mouseleave', this, false);
 			}
-			this.panel.addEventListener('dblclick', this, false);
-			this.panel.addEventListener('mouseover', this, false);
-			this.panel.addEventListener('mouseout', this, false);
+			['dblclick', 'mouseover', 'mouseout', 'command', 'contextmenu'].forEach(event => {
+				this.panel.addEventListener(event, this, false);
+			});
 			gBrowser.tabContainer.addEventListener('TabSelect', this, false);
 			['content-document-global-created', 'inner-window-destroyed', 'outer-window-destroyed',
 			 'http-on-examine-cached-response', 'http-on-examine-response'].forEach(topic => {
@@ -47,12 +119,16 @@ if (location == 'chrome://browser/content/browser.xul') {
 
 		get panel (){
 			if(!this._panel){
+				let cE = this.createElement;
 				this._panel = document.getElementById('NetworkIndicator-panel') || 
-					this.createElement('panel', {
+					cE('panel', {
 						id: 'NetworkIndicator-panel',
 						type: 'arrow'
 					}, document.getElementById('mainPopupSet'));
-					this._panel._list = this.createElement('html:ul', {}, this._panel);
+				this._panel._contextMenu = cE('menupopup', {id: 'NetworkIndicator-contextMenu'}, this._panel);
+				cE('menuitem', {label: '复制全部'}, this._panel._contextMenu)._command = 'copyAll';
+				cE('menuitem', {label: '复制选中'}, this._panel._contextMenu)._command = 'copySelection';
+				this._panel._list = cE('ul', {}, cE('vbox', {context: 'NetworkIndicator-contextMenu'}, this._panel));
 			}
 			return this._panel;
 		},
@@ -79,7 +155,7 @@ if (location == 'chrome://browser/content/browser.xul') {
 					this.updateState();
 					//从一般网页后退到无网络请求的页面（例如about:xxx）应关闭面板。
 					if(!this.recordInner[cwId.currentInnerWindowID])
-						this.panel.hidePopup();
+						this.panel.hidePopup && this.panel.hidePopup();
 				}
 			}else if(topic == 'content-document-global-created'){
 				let domWinUtils = subject.top
@@ -203,6 +279,8 @@ if (location == 'chrome://browser/content/browser.xul') {
 
 		_nsIDNSService: Cc['@mozilla.org/network/dns-service;1'].createInstance(Ci.nsIDNSService),
 
+		_nsIClipboardHelper: Cc['@mozilla.org/widget/clipboardhelper;1'].getService(Ci.nsIClipboardHelper),
+
 		dnsDetect(obj, isMainHost){
 			if(obj.ip) return this.updatePanel(obj, isMainHost);
 			this._nsIDNSService.asyncResolve(obj.host, this._nsIDNSService.RESOLVE_BYPASS_CACHE, {
@@ -223,10 +301,10 @@ if (location == 'chrome://browser/content/browser.xul') {
 			if(!li){//不存在相同的IP
 				let fragment = document.createDocumentFragment(),
 					ipSpan = null;
-				li = cE('html:li', {'ucni-ip': record.ip}, fragment);
-				cE('html:p', {class: 'ucni-ip', text: record.ip + '\n'}, ipSpan = cE('html:span', {}, li));
+				li = cE('li', {'ucni-ip': record.ip}, fragment);
+				cE('p', {class: 'ucni-ip', text: record.ip + '\n'}, ipSpan = cE('span', {}, li));
 				// + '\n' 复制时增加换行格式
-				p = cE('html:p', {class: 'ucni-host', host: record.host, scheme: record.scheme, counter: 1, text: record.host + '\n'}, cE('html:span', {}, li));
+				p = cE('p', {class: 'ucni-host', host: record.host, scheme: record.scheme, counter: 1, text: record.host + '\n'}, cE('span', {}, li));
 				p._connCounter = 1;
 				p._connScheme = [record.scheme];
 				if(isMainHost){
@@ -235,7 +313,7 @@ if (location == 'chrome://browser/content/browser.xul') {
 					//主域名重排列至首位
 					list.insertBefore(fragment, list.firstChild);
 					//更新主域名 IP位置
-					this.setMainHostLocation(record, list);
+					this.updateMainInfo(record, list);
 				}else{
 					list.appendChild(fragment);
 					//不存在相同的IP且非主域名
@@ -256,7 +334,7 @@ if (location == 'chrome://browser/content/browser.xul') {
 			}else{//相同的IP
 				p = li.querySelector(`.ucni-host[host="${record.host}"]`);
 				if(!p){//同IP不同的域名
-					p = cE('html:p', {class: 'ucni-host', host: record.host, scheme: record.scheme, counter: 1, text: record.host + '\n'}, li.querySelector('.ucni-host').parentNode);
+					p = cE('p', {class: 'ucni-host', host: record.host, scheme: record.scheme, counter: 1, text: record.host + '\n'}, li.querySelector('.ucni-host').parentNode);
 					p._connCounter = 1;
 					p._connScheme = [record.scheme];
 				}else{//同IP同域名
@@ -274,7 +352,7 @@ if (location == 'chrome://browser/content/browser.xul') {
 						list.insertBefore(li, list.firstChild);
 						li.lastChild.insertBefore(p, li.lastChild.firstChild);
 					}
-					this.setMainHostLocation(record, list);
+					this.updateMainInfo(record, list);
 				}
 			}
 
@@ -295,21 +373,62 @@ if (location == 'chrome://browser/content/browser.xul') {
 			});
 		},
 
-		setMainHostLocation(obj, list) {
+		updateMainInfo(obj, list) {
 			if(obj.location){
 				if(list.querySelector('#ucni-mplocation')) return;
 				let cE = this.createElement,
 					fm = document.createDocumentFragment(),
-					li = cE('html:li', {id: 'ucni-mplocation'}, fm);
-				cE('html:span', {text: obj.location + '\n'}, cE('html:span', {text: '所在地: '}, cE('html:p', {}, li)).parentNode);
-				obj.server && cE('html:span', {text: obj.server + '\n'}, cE('html:span', {text: '服务器: '}, cE('html:p', {}, li)).parentNode);
-				list.insertBefore(fm, list.firstChild);
-				//同时更新第一个（主域名）tooltip
-				this.setTooltip(list.querySelector('.ucni-MainHost'), obj);
+					li = cE('li', {id: 'ucni-mplocation'}, fm),
+					timeStamp = new Date().getTime(),
+					text = ['所在地', '服务器', '内网IP', '外网IP'],
+					info = [];
+				let setMainInfo = info => {
+					let location = this.localAndPublicIPs.publicLocation;
+					if(this.localAndPublicIPs._public){
+						info.push({value: this.localAndPublicIPs._public[0], text: text[3]});
+						location = this.localAndPublicIPs._public[1];
+					}
+					for(let i of info){
+						if(!i.value) continue;
+						let label = cE('label', {text: i.value + '\n'}, cE('span', {text: i.text + ': '}, cE('p', {}, li)).parentNode);
+						if(i.text === text[3]) this.setTooltip(label, { ip: i.value, location: location });
+					}
+					list.insertBefore(fm, list.firstChild);
+					//同时更新第一个（主域名）tooltip
+					this.setTooltip(list.querySelector('.ucni-MainHost'), obj);
+				};
+
+				info.push({value: obj.location, text: text[0]});
+				obj.server && info.push({value: obj.server, text: text[1]});
+
+				if(this._getLocalIP && !this.localAndPublicIPs){
+					(new Promise(this.getLocalAndPublicIPs)).then(reslut => {
+						this.localAndPublicIPs = reslut;
+						info.push({value: reslut.localIP, text: text[2]});
+						info.push({value: reslut.publicIP, text: text[3]});
+						setMainInfo(info);
+					}, () => {setMainInfo(info);}).catch(() => {
+						setMainInfo(info);
+					});
+				}else{
+					if(this.localAndPublicIPs){
+						info.push({value: this.localAndPublicIPs.localIP, text: text[2]});
+						info.push({value: this.localAndPublicIPs.publicIP, text: text[3]});
+					}
+					setMainInfo(info);
+				}
 			}else{
 				this.queryLocation(obj.ip, result => {
 					obj.location = result.location;
-					this.setMainHostLocation(obj, list);
+					this.localAndPublicIPs = this.localAndPublicIPs || {};
+					//如果不使用WebRCT方式获取内外网IP
+					if(!this._getLocalIP){
+						this.localAndPublicIPs.publicIP = result.publicIP;
+						this.localAndPublicIPs.publicLocation = result.publicLocation;
+					}else{
+						this.localAndPublicIPs._public = [result.publicIP, result.publicLocation];
+					}
+					this.updateMainInfo(obj, list);
 				});
 			}
 		},
@@ -317,13 +436,13 @@ if (location == 'chrome://browser/content/browser.xul') {
 		queryLocation(ip, callback){
 			let req = Cc['@mozilla.org/xmlextras/xmlhttprequest;1']
 						.createInstance(Ci.nsIXMLHttpRequest),
-				url = '',
-				regex = null;
-			if(ip.contains(':')){
-				regex = /id="Span1">(?:IPv\d[^:]+:\s*)?([^<]+)(?=<br)/i;
+				url = '', regex = null;
+			if(ip.indexOf(':') > -1){
+				regex = [/id="Span1">(?:IPv\d[^:]+:\s*)?([^<]+)(?=<br)/i,
+						/"cz_ip">([^<]+)/i, /"cz_addr">(?:IPv\d[^:]+:\s*)?([^<]+)/i];
 				url = `http://ip.ipv6home.cn/?ip=${ip}`;
 			}else{
-				regex = /"InputIPAddrMessage">([^<]+)/;
+				regex = [/"InputIPAddrMessage">([^<]+)/i, /"cz_ip">([^<]+)/i, /"cz_addr">([^<]+)/i];
 				url = `http://www.cz88.net/ip/index.aspx?ip=${ip}`;
 			}
 			req.open('GET', url, true);
@@ -334,13 +453,91 @@ if (location == 'chrome://browser/content/browser.xul') {
 			};
 			req.onload = () => {
 				if (req.status == 200) {
+					let match = regex.map(r => req.responseText.match(r)[1]
+							.replace(/^[^>]+>(?:IPv\d[^:]+:\s*)?|\s*CZ88.NET.*/g, ''));
 					try{
-						callback({ip: ip, location: req.responseText.match(regex)[1].replace(/\s*CZ88.NET.*/, '')});
-					}catch(ex){
-						req.onerror();
-					}
+						callback({
+							ip: ip, location: match[0],
+							publicIP: match[1], publicLocation: match[2]
+						});
+					}catch(ex){ req.onerror();}
 				}
 			};
+		},
+
+		localAndPublicIPs: null,
+
+		getLocalAndPublicIPs(resolve, reject){
+			let hiddenFrame = new HiddenFrame(),
+				_RTCtimeout = null,
+				_failedTimeout = null;
+
+			//chrome环境下会抛出异常
+			hiddenFrame.get().then(window => {
+				let RTCPeerConnection = window.RTCPeerConnection
+					|| window.mozRTCPeerConnection;
+
+				if(!RTCPeerConnection) {
+					hiddenFrame.destroy();
+					hiddenFrame = null;
+					if(DEBUG) {
+						console.log('%cNetwork Indicator:\n', 
+							'color:red; font-size:120%; background-color:#ccc;',
+							'WebRTC功能不可用！'
+						);
+					}
+					return reject();
+				}
+				let pc = new RTCPeerConnection(undefined, {
+					optional: [{RtpDataChannels: true}]
+				}), onResolve = ips => {
+					clearTimeout(_failedTimeout);
+					hiddenFrame.destroy();
+					hiddenFrame = null;
+					resolve(ips);
+				}, ip = {}, debug = [];
+
+				let regex1 = /(?:[a-z\d]+[\:\.]+){2,}[a-z\d]+/i,
+					regex2 = /UDP \d+ ([\da-z\.\:]+).+srflx raddr ([\da-z\.\:]+)/i;
+				//内网IPv4，应该没有用IPv6的吧
+				let lcRegex = /^(192\.168\.|169\.254\.|10\.|172\.(1[6-9]|2\d|3[01]))/;
+				pc.onicecandidate = ice => {
+					if(!ice.candidate) return;
+					let _ip1 = ice.candidate.candidate.match(regex1),
+						_ip2 = ice.candidate.candidate.match(regex2);
+
+					if(DEBUG) debug.push(ice.candidate.candidate);
+
+					if(Array.isArray(_ip1)){
+						clearTimeout(_RTCtimeout);
+						if(Array.isArray(_ip2) && _ip2.length === 3)
+							return onResolve({publicIP: _ip2[1], localIP: _ip2[2]});
+
+						ip[lcRegex.test(_ip1[0]) ? 'localIP' : 'publicIP'] = _ip1[0];
+						
+						_RTCtimeout = setTimeout(()=>{
+							onResolve(ip);
+						}, 1000);
+					}
+				};
+
+
+				//5s超时
+				_failedTimeout = setTimeout(()=>{
+					if(DEBUG) {
+						console.log('%cNetwork Indicator:\n', 
+							'color:red; font-size:120%; background-color:#ccc;',
+							debug.join('\n')
+						);
+					}
+					reject();
+					hiddenFrame.destroy();
+					hiddenFrame = null;
+				}, 5000);
+
+				pc.createOffer(result => { pc.setLocalDescription(result);}, () => {});
+				pc.createDataChannel('');
+			});
 		},
 
 		updateState(cwId = this.getWinId()){
@@ -426,9 +623,7 @@ if (location == 'chrome://browser/content/browser.xul') {
 							record.location = result.location;
 							let text = this.setTooltip(target, record);
 							if(event.altKey){
-								Cc['@mozilla.org/widget/clipboardhelper;1']
-									.createInstance(Ci.nsIClipboardHelper)
-									.copyString(text);
+								this._nsIClipboardHelper.copyString(text);
 							}
 						}
 					});
@@ -469,7 +664,20 @@ if (location == 'chrome://browser/content/browser.xul') {
 					this.updateState();
 					break;
 				case 'dblclick':
-					this.updataLocation(event);
+					let info = this.panel._list.querySelector('#ucni-mplocation > p:last-child');
+					if(info && info.contains(event.originalTarget)){
+						let publicIP = info.childNodes[1].textContent.trim();
+						if(/^[a-z\.\:\d]+$/i.test(publicIP)){
+							this.queryLocation(publicIP, result => {
+								this.localAndPublicIPs.publicLocation = result.location;
+								let text = this.setTooltip(info.childNodes[1], result);
+								if(event.altKey)
+									this._nsIClipboardHelper.copyString(text);
+							});
+						}
+					}else{
+						this.updataLocation(event);
+					}
 					break;
 				case 'mouseover':
 				case 'mouseout':
@@ -482,6 +690,15 @@ if (location == 'chrome://browser/content/browser.xul') {
 						this.panel._showPanelTimeout =
 							event.view.setTimeout(this.openPopup.bind(this, event), this.autoPopup);
 					}
+					break;
+				case 'command':
+					this.onContextMenuCommand(event);
+					break;
+				case 'contextmenu':
+					this.panel.focus();
+					let selection = event.view.getSelection();
+					this.panel._contextMenu.childNodes[1].setAttribute('hidden', 
+						!this.panel.contains(selection.anchorNode) || selection.toString().trim() === '');
 					break;
 				default:
 					this.openPopup(event);
@@ -499,15 +716,30 @@ if (location == 'chrome://browser/content/browser.xul') {
 			};
 		},
 
+		onContextMenuCommand(event){
+			switch(event.originalTarget._command){
+				case 'copyAll':
+					this._nsIClipboardHelper.copyString(this.panel._list.textContent.trim());
+					break;
+				case 'copySelection':
+					this._nsIClipboardHelper.copyString(event.view.getSelection()
+						.toString().replace(/(?:\r\n)+/g, '\n').trim());
+					break;
+			}
+		},
+
 		createElement(name, attr, parent){
-			let e = document.createElementNS(!!~['panel', 'image'].indexOf(name) ? 
-				'http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul' :
-				'http://www.w3.org/1999/xhtml', name);
+			let ns = '', e = null;
+			if(!~['ul', 'li', 'span', 'p'].indexOf(name)){
+				ns = 'http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul';
+			}else{
+				ns = 'http://www.w3.org/1999/xhtml';
+				name = 'html:' + name;
+			}
+			e = document.createElementNS(ns , name);
 			if(attr){
 				for (let i in attr) {
-					if(typeof attr[i] == 'function')
-						e[i] = attr[i];
-					else if(i == 'text')
+					if(i == 'text')
 						e.textContent = attr[i];
 					else
 						e.setAttribute(i, attr[i]);
@@ -531,7 +763,7 @@ if (location == 'chrome://browser/content/browser.xul') {
 			@-moz-document url("chrome://browser/content/browser.xul"){
 				#NetworkIndicator-icon{
 					visibility: visible !important;
-					list-style-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAAAQCAYAAADeWHeIAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAKnAAACpwB9NLfEgAAABx0RVh0U29mdHdhcmUAQWRvYmUgRmlyZXdvcmtzIENTNui8sowAAATqSURBVGiB7dnPS9t3HMfx5/uTb2Oy6VpnIEsrCoNcMkxt2UHmRWEXkdHL7kPoD2xHD/U6cshAKBSmS1ud3U4T+gfk4KGz9rBTJYVSPHkq3WoRXGnTjmnM973D91sTTb7ffJOcmu0NknyT7+P7+pjv5/PO96uiqvxf/92y/N7M5XIDxphJVY2LSFJVNyORyOz58+f3ghxcbhQGsMwkaByVJKKbvInM6ncpTy8iVVuvBsD1SBJ0E47NQnQv0MTNyAAwCcSBJLAJzJLVYOMvnBrA2JMocUSSqG4S+XhWUxsd430ngDHma+Ar96SUjDGBTz4AIceD4zEh35NfZwSHPWYWok14XI/rg598J14dL64PEfjDf1+88bKLi4u9wFjVS/nLly9vBM2WX570Ioe9Xj0d2MPbmnzoDu4zUuuzGnz8T070glZ5yevprY7znhOgVCp9AfS4m1tdXV0/BQ0H4PVexStbvG3Ss38oH6wmPUc8zfm9aJWXLbpOdKT3/AoQkXNVz5d3d3djt2/f7rdtOx4Oh9cuXrz4xn8EFY+RZU7sxuTHx/3Y5TjRyJpeSgX3sAz7MXjTD3Ycjq0BDTxHPDEy0o9zPbBGVv29yDlwrzNEl9ndjsnjRD9ljROx1zS13RG+7gTI5XJDxphPAVTVBqZUNQJ0i8hqsVhc8c2eKwwhjge1UabY1wjY3RhZ5fftFS6lfI7wagik4pEpcPJBVuHlCiS8eUaGANdjA1OA61kF/Mdf+GQI4+ar69WKYNONsMr2Zyv4DP998nUngDHmGyAEICIGiLkXgjvGmKWZmZl973iAigfHg4Cygwkt6a9jrXnYAbMEJ/cPZnf9qvK4HtezRFb9841UvLheAGSHkC7p2FrH+JoJcP36dau7u7ugqhvAUxEZVdVxABFZmJ6e3vbLlp8fWJjjBWzHg4yC41FZ0G/Tvh6eW0AB6nhkAT709xlxPa5nFHA9C2TVf/wPxOJ4vIDKBuhTREZR14tZ0PTzjvI1EyCdTpcnJibuvtu+efNmWpzlf//KlSurfuEAfD5W1mEOvPzwKO3e3N/Xa2ca+2KiTI/crbzwOg2Oh57GHspkteIzksZpH/fJamM/Rll5URn/o5NpRJ3xn/mj43zNXcDExMRBb52bm+sDRlS1GA6HbzUMB3S40ptl8WEfwghoEdMVyNMjVb39ZR+4HiuYz1b9hSgjfcCIfM8YcEvEObaI6LufmvFT8fLwoz7QEZQiXcHyg/h285v2Z1+McfZF9uj+IqKet4EAlmUlRSQuIvMXLlz4K8gHcKj+sZIgcWyZ16up5j0hxyPzEG3Bk8S56oesHnhVFVUVL3RQ1gdJhDgSmtfUs+bzPXy7+U37R6e+9NrfdwIYY8ZVdT1Q669/hHHQ9UCtv27JOOh6wNZfr8aBdXBm+8FRPVZPTRkzjrIeqPU24dvNb9Zz9s/fvPb3nAC5XC6mqoOhUOhOw6A6JTcKMYwOYpuWPLyKAYMgrfmMuJ474Kya6rcbrSIpnIqh9iDGau33b+DbyQ/SAaq93/5+HSBh23Z+enp60y/IsywSlO28XhtuzUMC7Dz0tOHJk9W6vvEqKiewJa/Dz1rM9/ft5AfrABV/dP/q537/DCpFo9F7/iE+ZVPi7zY8lCDcpuceVFb/0Uf/MiWivW3ke/t285v19brfu8d/ARECPGiONeyhAAAAAElFTkSuQmCC");
+					list-style-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAAAQCAMAAADphoe6AAABRFBMVEUAAAAAzhgAAPMAzhgAzyiUlJT/fQAAzxYAj84AzhgAzhgAzRgAzhkAzhcAzhgAWN4AzhgAzhgAzhgAzhkAzxcAzhoAzRcAk9D/fQBjs2MAj84AAPOUlJSUlJSTk5P/fQAAj84AAPP/fQAAzxgAzhkAzRkAAPMAzRgAzhcAzRcAj82Tk5P/fQAAAPKUlJQAAPUA1BGUlJT/fQAAAPMAj86Tk5MAjs7/fQAAjs6UlJQAAPIAAPMAjs6UlJQAkM4AAPSWlpabm5sAj87/fQAAAPMAkM4AAPMAj86UlJT/fQAAAPL/fQAAkM//fQD/fQAAj86UlJQAAPP/fQAAAPMAkM+UlJT/fQD/fQAAjc7/fQAAAPMAj83/fQD/fQD/fQCTk5P/fQCUlJT/fQCVlZX/fQAAkc6UlJT/fQAAAPL/fQCSkpIAAACm8FOxAAAAa3RSTlMAv79+Bb+/E7+8pkpCLLMFrJmLazcmHBMSAr2pqX4qBX58fHpycG5hWU1LS0srFhAOvLyzs7OmpnBwSkJCQiwWEAasrJmZi4uLi4CAenFrZWVdQjc3NzctJiYhHByzspqamJh5YVlZWU0rHiQB3/AAAAHvSURBVEjHzdNXk9owFAVgSSAhYIHt9tIhCUmoobN0tvfed9N79P/fM06i6N5kJg/mJefJ35wZj3w8Iv9Lvp0k4omJ8f1xupWOGN/l9mJ7wA9H++39lPHygifg8bo3WeW8mgTuSBkdAucYYyXgQyFqX4EfU+oPTeFxk/NVYKshZQe4UmcsB2y/EuII2BemdGEKkwLn8QlwXspWBLjLWAy6KEQ7BRykNOCdwuQ154XyZWGsvSll/v4ib2lvMNYdnX+paL8RovhwVbS15ygNLi8+f+HWySqvxps8sfLLw6iMrjXkgf7oEmMsVmcZ7euaqK2/FFk9QshP/bNh6vG6NNnhTuJl7W3pZM3S3mJOYiPtXeFk3daep05mfW698ulkkOB8oB35eNxPR6P93z497WUY62mnPn84ywpxpu199nTGQ+mMK5t7mEDuyDRyjmWQD0WW6Dh/7gn1uLBJOd4cQ1uthgVdidUr0HZb2YoopfS9CoT1oMC4x/75rE0u+YDAXMg+8jnrIV8JReALFs2gyOofRgd4v0NQDraxM1vY2V2l4AKP5k1njHtsvED5bZLAWJs3yKONO2T73a2zgNL2zS2Z0vjvXhmjBZIFgjLMY5e62NdFoghYIBTUDTLusX8saA4wISg3EezSH75NYS953fo7l/NVa/IOl+4AAAAASUVORK5CYII=");
 					-moz-image-region: rect(0px 16px 16px 0px);
 				}
 				#NetworkIndicator-icon[state=subSpdy] {
@@ -560,9 +792,10 @@ if (location == 'chrome://browser/content/browser.xul') {
 					margin:0;
 					padding:0;
 				}
-				#NetworkIndicator-panel p{
+				#NetworkIndicator-panel :-moz-any(p, label){
 					-moz-user-focus: normal;
 					-moz-user-select: text;
+					cursor: text!important;
 				}
 				#NetworkIndicator-panel .panel-arrowcontent{
 					margin: 0;
@@ -578,17 +811,18 @@ if (location == 'chrome://browser/content/browser.xul') {
 					font: bold 90%/1.5rem Helvetica, Arial !important;
 					color: #2553B8;
 				}
-				#NetworkIndicator-panel #ucni-mplocation>p>span{
+				#NetworkIndicator-panel #ucni-mplocation>p>:-moz-any(span, label){
 					color: #666;
 					font-size:90%;
 					font-weight:bold;
 				}
-				#NetworkIndicator-panel #ucni-mplocation>p>span:last-child{
-					color:#0055CC;
-					flex:1;
-					text-align: center;
-					margin-left: 1ch;
-					max-width:23em;
+				#NetworkIndicator-panel #ucni-mplocation>p>label{
+					color:#0055CC!important;
+					flex:1!important;
+					text-align: center!important;
+					padding:0!important;
+					margin:0 0 0 1ch!important;
+					max-width:23em!important;
 				}
 
 				#NetworkIndicator-panel li:nth-child(2n-1){
@@ -631,7 +865,7 @@ if (location == 'chrome://browser/content/browser.xul') {
 					border-radius: 3px;
 					float: right;
 					padding: 0 2px;
-					margin: 2px 0;
+					margin: 3px 0 2px;
 				}
 				#NetworkIndicator-panel p.ucni-host[counter]::before{
 					float: left;
