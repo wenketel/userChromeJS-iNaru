@@ -2,8 +2,7 @@
 // @name           reloadAndstopButton
 // @include        main
 // @compatibility  FF29+
-// @note           FF29+ 刷新停止按钮
-// @version        0.0.3
+// @version        0.0.4
 // ==/UserScript==
 
 location == "chrome://browser/content/browser.xul" && (function(){
@@ -11,21 +10,23 @@ location == "chrome://browser/content/browser.xul" && (function(){
 		anchorBtn: null,
 		isBusy: new WeakMap(),
 		init: function(){
-			CustomizableUI.createWidget({
-				id: "reloadAndstopButton",
-				type: "button",
-				defaultArea: CustomizableUI.AREA_NAVBAR,
-				label: "\u5237\u65B0/\u505C\u6B62",
-				tooltiptext: "\u505C\u6B62",
-				onCommand: function(event){
-					var cl = document.getElementById("reloadAndstopButton").classList;
-					if(cl.contains("reloadAndstopButton-stop")){
-						BrowserStop();
-					}else{
-						BrowserReloadOrDuplicate(event);
+			try{
+				CustomizableUI.createWidget({
+					id: "reloadAndstopButton",
+					type: "button",
+					defaultArea: CustomizableUI.AREA_NAVBAR,
+					label: "\u5237\u65B0/\u505C\u6B62",
+					tooltiptext: "\u505C\u6B62",
+					onCommand: function(event){
+						var cl = document.getElementById("reloadAndstopButton").classList;
+						if(cl.contains("reloadAndstopButton-stop")){
+							BrowserStop();
+						}else{
+							BrowserReloadOrDuplicate(event);
+						}
 					}
-				}
-			});
+				});
+			}catch(ex){}
 			var cssStr = '@-moz-document url("chrome://browser/content/browser.xul"){'
 						+'#reloadAndstopButton{'
 						+'list-style-image: url("chrome://browser/skin/Toolbar.png");'
@@ -34,12 +35,15 @@ location == "chrome://browser/content/browser.xul" && (function(){
 						+ '#reloadAndstopButton.reloadAndstopButton-stop{'
 						+ '-moz-image-region: rect(0px, 108px, 18px, 90px);'
 						+ '}'
+						+'toolbar[brighttext] #reloadAndstopButton{'
+						+ 'list-style-image: url("chrome://browser/skin/Toolbar-inverted.png");'
+						+ '}'
 						+'}';
 			var sss = Cc["@mozilla.org/content/style-sheet-service;1"].getService(Ci.nsIStyleSheetService);
 			var ios = Cc["@mozilla.org/network/io-service;1"].getService(Ci.nsIIOService);
 			sss.loadAndRegisterSheet(ios.newURI("data:text/css;base64," + btoa(cssStr),null, null), sss.USER_SHEET);
 
-			this.updateBtnUI(1);
+			this.updateBtnUI(gBrowser.selectedBrowser.webProgress.isLoadingDocument);
 
 			gBrowser.addTabsProgressListener(this);
 			gBrowser.tabContainer.addEventListener("TabSelect", this.tabSelect.bind(this), false);
